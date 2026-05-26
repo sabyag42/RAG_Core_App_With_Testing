@@ -1,33 +1,59 @@
 from rag import build_rag_chain, create_vector_store, chunk_documents, load_pdf, ask_question
-from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_recall
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from datasets import Dataset
+from langchain_openai import ChatOpenAI
 from langsmith import traceable
 import pandas as pd
 
 golden_dataset = [
-    {
-        "question": "What is the roaming charge for calls in EU/EEA countries?",
-        "ground_truth": "€0.19 per minute"
-    },
-    {
-        "question": "How do I cancel my plan?",
-        "ground_truth": "My Odido App → Account Settings → Manage Plan → Cancel Plan Phone → Call 1234 Online → odido.nl/cancel In Store → with valid photo ID 30-day notice period applies"
-    },
-    {
-        "question": "What happens if I pay my bill late?",
-        "ground_truth": "€2.50 fee if not received within 7 days of due date, Service suspended after 30 days, €5.00 reconnection fee to restore service"
-    },
-    {
-        "question": "What is the price of the Premium plan?",
-        "ground_truth": "Premium is €44.99 with Unlimited data. No overage."
-    },
-    {
-        "question": "What is the customer care phone number?",
-        "ground_truth": "You can reach our customer care team at 1234 (free) or +31 20 123 4567 from Mon-Fri 8am-8pm, Sat 9am-5pm for assistance."
-    }
+    {"question": "What is the roaming charge for calls in EU/EEA countries?",
+     "ground_truth": "€0.19 per minute"},
+    {"question": "How do I cancel my plan?",
+     "ground_truth": "30-day notice period. Via App, Phone 1234, Online or In Store."},
+    {"question": "What happens if I pay my bill late?",
+     "ground_truth": "€2.50 fee after 7 days. Suspended after 30 days. €5.00 reconnection fee."},
+    {"question": "What is the price of the Premium plan?",
+     "ground_truth": "€44.99 with Unlimited data. No overage."},
+    {"question": "What is the customer care phone number?",
+     "ground_truth": "1234 (free) or +31 20 123 4567. Mon-Fri 8am-8pm, Sat 9am-5pm."}
 ]
+
+judge_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+def score_faithfulness(answer, contexts):
+    """Does the answer only use info from the retrieved chunks?"""
+    context_text = "\n".join(contexts)
+    prompt = f"""Rate if this answer is faithful to the context (only uses info from context).
+Context: {context_text}
+Answer: {answer}
+Return ONLY a number between 0 and 1. 1=fully faithful, 0=not faithful."""
+    result = judge_llm.invoke(prompt)
+    try:
+        return float(result.content.strip())
+    except:
+        return 0.0
+
+def score_relevancy(question, answer):
+    """Does the answer actually address the question?"""
+    prompt = f"""Rate how relevant this answer is to the question.
+Question: {question}
+Answer: {answer}
+Return ONLY a number between 0 and 1. 1=perfectly relevant, 0=completely irrelevant."""
+    result = judge_llm.invoke(prompt)
+    try:
+        return float(result.content.strip())
+    except:
+        return 0.0
+
+def score_correctness(answer, ground_truth):
+    """Does the answer match the ground truth?"""
+    prompt = f"""Rate how correct this answer is compared to the ground truth.
+Ground Truth: {ground_truth}
+Answer: {answer}
+Return ONLY a number between 0 and 1. 1=perfectly correct, 0=completely wrong."""
+    result = judge_llm.invoke(prompt)
+    try:
+        return float(result.content.strip())
+    except:
+        return 0.0
 
 @traceable(name="RAG Evaluation Pipeline")
 def run_evaluation():
@@ -41,8 +67,8 @@ def run_evaluation():
         )
     )
 
-    # Step 2: Run each question through RAG
-    questions, ground_truths, answers, contexts = [], [], [], []
+    # Step 2: Run each question and evaluate
+    results = []
 
     for item in golden_dataset:
         q = item['question']
@@ -50,43 +76,33 @@ def run_evaluation():
 
         ans, _ = ask_question(chain, retriever, q)
         source_docs = retriever.invoke(q)
-        retrieved_contexts = [doc.page_content for doc in source_docs]
+        contexts = [doc.page_content for doc in source_docs]
 
-        questions.append(q)
-        ground_truths.append(gt)
-        answers.append(ans)
-        contexts.append(retrieved_contexts)
+        # Score with LLM-as-judge
+        faithfulness = score_faithfulness(ans, contexts)
+        relevancy = score_relevancy(q, ans)
+        correctness = score_correctness(ans, gt)
 
-    # Step 3: Wrap into HuggingFace Dataset
-    # RAGAS 0.1.x expects these exact column names
-    eval_dataset = Dataset.from_dict({
-        "question": questions,
-        "answer": answers,
-        "contexts": contexts,
-        "ground_truth": ground_truths
-    })
+        results.append({
+            "question": q,
+            "answer": ans,
+            "faithfulness": faithfulness,
+            "answer_relevancy": relevancy,
+            "correctness": correctness
+        })
 
-    # Step 4: Run RAGAS evaluation
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        print(f"✓ Evaluated: {q[:50]}...")
 
-    result = evaluate(
-        dataset=eval_dataset,
-        metrics=[faithfulness, answer_relevancy, context_recall],
-        llm=llm,
-        embeddings=embeddings
-    )
-
-    # Step 5: Print results as table
-    df = result.to_pandas()
-    print("\n=== RAGAS EVALUATION RESULTS ===")
-    print(df[['question', 'faithfulness', 'answer_relevancy', 'context_recall']])
+    # Step 3: Print results
+    df = pd.DataFrame(results)
+    print("\n=== EVALUATION RESULTS ===")
+    print(df[['question', 'faithfulness', 'answer_relevancy', 'correctness']].to_string())
     print(f"\nAverage Scores:")
     print(f"Faithfulness:      {df['faithfulness'].mean():.2f}")
     print(f"Answer Relevancy:  {df['answer_relevancy'].mean():.2f}")
-    print(f"Context Recall:    {df['context_recall'].mean():.2f}")
+    print(f"Correctness:       {df['correctness'].mean():.2f}")
 
-    return result
+    return df
 
 if __name__ == "__main__":
     run_evaluation()
