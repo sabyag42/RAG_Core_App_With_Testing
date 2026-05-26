@@ -102,3 +102,11 @@ if __name__ == "__main__":
     for q in questions:
         print(f"\nQ: {q}")
         ask_question(chain, retriever, q)
+
+
+# "The problem RAG solves is that LLMs don't know your company's data — they hallucinate when asked about it. RAG fixes this by fetching relevant documents first.
+# Here's how I built it: First, load_pdf reads the document using PyPDFLoader. Then chunk_documents splits it into 500-token pieces with 10% overlap using RecursiveCharacterTextSplitter — recursive means it tries paragraphs first, then sentences, then words, preserving natural structure.
+# Then create_vector_store embeds each chunk using OpenAI's text-embedding-3-small and stores them in FAISS — a vector database for similarity search.
+# build_rag_chain creates the LCEL pipeline: RunnableParallel fetches the top 4 relevant chunks and passes the question through simultaneously. These feed into a custom prompt, then GPT-4o-mini at temperature zero — deterministic, no randomness — then StrOutputParser extracts the clean text.
+# Finally ask_question invokes the chain and returns the answer with source page numbers so users know exactly where the answer came from."
+
