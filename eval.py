@@ -102,7 +102,35 @@ def run_evaluation():
     print(f"Answer Relevancy:  {df['answer_relevancy'].mean():.2f}")
     print(f"Correctness:       {df['correctness'].mean():.2f}")
 
+
+    # Step 4: Check thresholds  ← ADD IT HERE
+    THRESHOLDS = {
+        "faithfulness": 0.60,
+        "answer_relevancy": 0.60,
+        "correctness": 0.60
+    }
+    failed = False
+    print("\n=== THRESHOLD CHECK ===")
+    for metric, threshold in THRESHOLDS.items():
+        score = df[metric].mean()
+        status = "✅ PASS" if score >= threshold else "❌ FAIL"
+        print(f"{metric}: {score:.2f} (min: {threshold}) {status}")
+        if score < threshold:
+            failed = True
+
+    if failed:
+        print("\n❌ EVALUATION FAILED — scores below threshold")
+        import sys
+        sys.exit(1)
+    else:
+        print("\n✅ EVALUATION PASSED — safe to deploy")
+
     return df
+
+
+
 
 if __name__ == "__main__":
     run_evaluation()
+
+
