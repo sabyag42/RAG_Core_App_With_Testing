@@ -34,5 +34,5 @@ jobs:
           LANGCHAIN_ENDPOINT: "https://api.smith.langchain.com"
 
         run: |
-          python evaluate.py
+          python eval.py
 
